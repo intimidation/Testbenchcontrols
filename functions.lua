@@ -88,7 +88,35 @@ function spawnTrainAtStationWithSchedule(stationName, numFrontLoco, numBackLoco,
   end
 end
 
+function start_spawning_trains() 
+  local spawner_stations = {"Spawner North", "Spawner West", "Spawner East", "Spawner South"}
+  
+  -- Cache global values as local variables
+  local locoValue = global.Loco_value
+  local wagonsValue = global.Wagons_value
+  
+  for _, station in pairs(spawner_stations) do
+    spawnTrainAtStationWithSchedule(station, locoValue, 0, wagonsValue, 0)
+  end
+end
 
 
+script.on_event(defines.events.on_tick, function(event)
+    -- Increment the counter
+    global.counter = global.counter + 1
 
+    -- Check if the testbench is running
+    if global.testbench_running then
+        if global.current_set == 1 and global.testtimer > 10 and global.testtimer < 60 then
+            check_state_and_update_table()
+        end
 
+        if global.counter >= global.tpmtick then
+            -- Call the function to start spawning trains
+            start_spawning_trains()
+
+            -- Reset the counter
+            global.counter = 0
+        end
+    end
+end)
