@@ -1,35 +1,32 @@
--- Constants
-local COMBINATOR_POSITION = {x=208.5, y=1282.5}
 
 -- Create main frame with buttons and labels
 local function create_main_frame(player)
-    -- Create outer frame (Standalone Window) in player.gui.screen for draggability
-    local outer_frame = player.gui.screen.add{
-        type = "frame",
-        name = "outer_frame",
-        direction = "horizontal",
-        style = "frame"
-    }
+    -- Create parent frame (Standalone Window) in player.gui.screen for draggability
+    local parent_frame = player.gui.screen.add{type="frame", name="parent_frame", direction="vertical"}
+
     -- Make the frame draggable
-    local dragger = outer_frame.add{type="empty-widget"}
-    dragger.style.size = {24, 100}
-    dragger.drag_target = outer_frame
-	dragger.style = "draggable_space_header"
-	
-    -- Position the frame at the top of the screen
-    outer_frame.location = {x=0, y=500}
+    local dragger = parent_frame.add{type="empty-widget"}
+    dragger.style = "draggable_space_header"
+    dragger.style.size = {400, 10}
+    dragger.drag_target = parent_frame
+
+    -- Position the parent frame at the top of the screen
+    parent_frame.location = {x=0, y=600}
+
+    -- Create a frame to hold inner_frame1 and inner_frame2 horizontally
+    local horizontal_frame = parent_frame.add{type="frame", name="horizontal_frame", direction="vertical"}
 
     -- Create first inner frame for buttons (Content Frame)
-    local inner_frame1 = outer_frame.add{
+    local inner_frame1 = horizontal_frame.add{
         type = "frame",
         name = "inner_frame1",
-        direction = "vertical",
+        direction = "horizontal",
         style = "frame"
     }
 
     -- Add sprite-buttons to first inner frame
     inner_frame1.add{type = "sprite-button", name = "start_button", sprite = "start_button_sprite"}
-	inner_frame1.add{type = "speed_up_button", name = "speed_up_button", sprite = "speedup_button_sprite" }
+	inner_frame1.add{type = "sprite-button", name = "speed_up_button", sprite = "speed_up_button_sprite" }
     inner_frame1.add{type = "sprite-button", name = "reset_button", sprite = "reset_button_sprite"}
     inner_frame1.add{type = "sprite-button", name = "auto_button", sprite = "auto_button_sprite"}
     inner_frame1.add{type = "sprite-button", name = "sets_button", sprite = "sets_button_sprite"}
@@ -39,20 +36,20 @@ local function create_main_frame(player)
 	inner_frame1.auto_button.tooltip = "Switch between Auto and Manual mode"
 	inner_frame1.sets_button.tooltip = "Sets configuration in manual mode"
 	inner_frame1.settings_button.tooltip = "Open Settings"
-	inner_frame1.speed_up_button.tooltip = "Speed up the game"
+	inner_frame1.speed_up_button.tooltip = "Changes game.speed between 1 and 20"
 
     -- Create second inner frame for labels (Content Frame)
-    local inner_frame2 = outer_frame.add{
+    local inner_frame2 = horizontal_frame.add{
         type = "frame",
         name = "inner_frame2",
-        direction = "vertical",
+        direction = "horizontal",
         style = "frame"
     }
 
     -- Add labels to second inner frame
-	inner_frame2.add{type = "label", name = "current_time_running_label", caption = "Current Time: 0", style = "label"}
-	inner_frame2.add{type = "label", name = "current_tpm_label", caption = "Current TPM: 0", style = "label"}
-	inner_frame2.add{type = "label", name = "current_set_label", caption = "Current Set: 0", style = "label"}
+	inner_frame2.add{type = "label", name = "current_time_running_label", caption = "0", style = "label"}
+	inner_frame2.add{type = "label", name = "current_set_label", caption = "Set: 0", style = "label"}
+	inner_frame2.add{type = "label", name = "current_tpm_label", caption = "TPM: 0", style = "label"}
     inner_frame2.add{type = "label", name = "set1_label", caption = "Set 1: 0", style = "label"}
     inner_frame2.add{type = "label", name = "set2_label", caption = "Set 2: 0", style = "label"}
     inner_frame2.add{type = "label", name = "set3_label", caption = "Set 3: 0", style = "label"}
@@ -60,12 +57,13 @@ local function create_main_frame(player)
 end
 
 -- Event handler for game initialization
-script.on_init(function()
+script.on_configuration_changed(function()
+	global.temp_slider_values = {}
+	global.sec = 0
     global = global or {}
     global.auto_mode = global.auto_mode or true
     global.set_number = global.set_number or 1
     global.reset_signal = global.reset_signal or false
-    global.K_value = global.K_value or 2
     global.M_value = global.M_value or 15
 	global.pending_resets = global.pending_resets or {}
 	global.TPM_value = global.TPM_value or 2900  -- Initialize to 2900 if it doesn't exist
@@ -74,30 +72,48 @@ script.on_init(function()
 	global.Wagons_value = global.Wagons_value or 4
 	global.Loco_value = global.Loco_value or 2
 	global.TestRuns_value = global.TestRuns_value or 1
-	global.last_signal_9 = global.last_signal_9 or nil
-	global.TestRuns_counter = 0
-	
+	global.TestRuns_counter = 1
+	global.despawned_trains = 0
+	global.current_test = 1
+	global.test_scores = {}
+	global.testtimer = 0
+	global.tpmtick = 360000/global.TPM_value
+	global.counter = 0
 
     for i, player in pairs(game.players) do
         if player and player.valid then
+            destroy_GUI(player)  -- Pass player as an argument
             create_main_frame(player)
-            game.print("Frame should be created for player: " .. i)  -- Debugging line
-        else
-            game.print("Player " .. i .. " is not valid.")  -- Debugging lineo
-        end
+		end
     end
 end)
 
-function print_global_variables()
-    for key, value in pairs(global) do
-        game.print(key .. ": " .. tostring(value))
-    end
-end
 
 -- Destroy GUI
 function destroy_GUI(player)
     if player.gui.screen["outer_frame"] then
         player.gui.screen["outer_frame"].destroy()
+    end
+    if player.gui.screen["parent_frame"] then
+        player.gui.screen["parent_frame"].destroy()
+    end
+end
+
+function read_signal_state_at_coordinates(x, y)
+    local signal_entity = game.surfaces[1].find_entity("rail-signal", {x, y})
+    if signal_entity then
+        local state_enum = signal_entity.signal_state
+        local state_description = "Unknown"
+
+        if state_enum == defines.signal_state.open then
+            state_description = "Closed (red)"
+        elseif state_enum == defines.signal_state.reserved then
+            state_description = "Reserved (Orange)"
+		end
+
+        return state_description
+    else
+        return nil
     end
 end
 
@@ -111,11 +127,11 @@ function create_settings_frame(player)
     -- Make the frame draggable
     local dragger = frame.add{type="empty-widget"}
 	dragger.style = "draggable_space_header"
-    dragger.style.size = {300, 24}
+    dragger.style.size = {200, 24}
     dragger.drag_target = frame
 
     -- Position the frame at the top of the screen
-    frame.location = {x=280, y=330}
+    frame.location = {x=400, y=400}
 
     -- Add title label to the main frame
     local title_label = frame.add{type="label", name="settings_title_label", caption="Settings"}
@@ -126,11 +142,6 @@ function create_settings_frame(player)
 
     -- Create a flow to hold the first set of sliders and labels
     local settings_flow = main_flow.add{type="flow", name="settings_flow", direction="vertical"}
-
-    -- Add K slider and labels
-    settings_flow.add{type="label", name="K_label", caption="Time to fill up intersection:"}
-    local K_slider = settings_flow.add{type="slider", name="K_slider", minimum_value=1, maximum_value=10, value=global.K_value or 0, value_step=1}
-    settings_flow.add{type="label", name="K_value_label", caption=tostring(global.K_value or 1) .. " Min"}
 
     -- Add M slider and labels
     settings_flow.add{type="label", name="M_label", caption="Test time per set"}
@@ -159,169 +170,403 @@ function create_settings_frame(player)
     local Wagons_slider = settings_flow2.add{type="slider", name="Wagons_slider", minimum_value=0, maximum_value=10, value=global.Wagons_value or 0, value_step=1}
     settings_flow2.add{type="label", name="Wagons_value_label", caption=tostring(global.Wagons_value or 4)}
 
-
-	set_signal(6, {type="signal-K", value=global.K_value})
-    set_signal(7, {type="signal-M", value=global.M_value})
-	set_signal(8, {type="signal-X", value=global.Loco_value_label})
-	set_signal(9, {type="signal-Y", value=global.Wagons_value})
-    set_signal(10, {type="signal-G", value=global.TPM_value})
-
-	
-	
 	settings_flow2.add{type="label", name="TestRuns_label", caption="Number of Test Runs:"}
     local TestRuns_slider = settings_flow2.add{type="slider", name="TestRuns_slider", minimum_value=1, maximum_value=100, value=global.TestRuns_value or 1, value_step=1}
     settings_flow2.add{type="label", name="TestRuns_value_label", caption=tostring(global.TestRuns_value or 1)}
 	-- Add "Apply" Button to settings_flow2
     settings_flow2.add{type="button", name="apply_button", caption="Apply"}
 end
---Testbench functions
--- Function to run a test
+
+
 function run_test()
 	 global.TestRuns_counter = global.TestRuns_counter or 0
     if global.TestRuns_counter > 0 then
-        set_signal(1, {type="signal-A", value=1}, true)  -- Start a new run
+	
         global.TestRuns_counter = global.TestRuns_counter - 1  -- Reduce the counter
     end
 end
 
 
+function populate_train_stops(surface)
+  global.train_stops_data = {}  -- Initialize the global table
+  local train_stops = surface.find_entities_filtered({type = "train-stop"})
+  for _, train_stop in pairs(train_stops) do
+    local position = train_stop.position
+    local direction = train_stop.direction  -- Get the direction of the train stop
+    local closest_signal = surface.find_entities_filtered({
+      type = "rail-signal",
+      area = {{position.x - 1, position.y - 1}, {position.x + 1, position.y + 1}},
+      limit = 1
+    })[1]
+    
+    local closest_signal_position = closest_signal and closest_signal.position or nil
+    table.insert(global.train_stops_data, {
+      x = position.x, 
+      y = position.y, 
+      direction = direction,  -- Include the direction
+      closest_signal = closest_signal_position, 
+    })
+  end
+end
 
--- Function to check the number of ways trains can go
-function check_number_of_ways()
-    local directions = {"South all lanes", "West all lanes", "North all lanes", "East all lanes"}
-    local no_way_to = {}
-    
-    for _, surface in pairs(game.surfaces) do
-        for _, stop_name in pairs(directions) do
-            local can_go = false
-            for _, train in pairs(surface.get_trains()) do
-                if train.schedule and train.schedule.records then
-                    for _, record in pairs(train.schedule.records) do
-                        if record.station == stop_name then
-                            can_go = true
-                            break
-                        end
-                    end
-                end
-                if can_go then break end
-            end
-            if not can_go then
-                table.insert(no_way_to, stop_name)
-            end
-        end
+
+-- Function to delete all trains on a given surface
+function delete_all_trains(surface)
+  for _, train in pairs(surface.get_trains()) do
+    for _, carriage in pairs(train.carriages) do
+      carriage.destroy()
     end
-    
-    if #no_way_to == 0 then
-       global.numberofways = 4
-		
+  end
+end
+
+-- Function to get the opposite direction of a train
+function oppositeDirection(direction)
+  return (direction + 4) % 8
+end
+-- Function to get a schedule by its name
+
+
+function spawnTrainAtStationWithSchedule(stationName, numFrontLoco, numBackLoco, numCargoWagons, numFluidWagons)
+  -- Convert to numbers, default to 0 if nil
+  numFrontLoco = numFrontLoco or 0
+  numBackLoco = numBackLoco or 0
+  numCargoWagons = numCargoWagons or 0
+  numFluidWagons = numFluidWagons or 0
+
+  -- Find the train stops by name
+  local surface = game.surfaces[1]
+  local stations = game.get_train_stops{name = stationName}
+
+  if #stations == 0 then
+    log("No station found with the name: " .. stationName)
+    return
+  end
+
+  -- Loop through each station with the given name
+  for _, station in pairs(stations) do
+    local connectedRail = station.connected_rail
+    local stationDirection = station.direction
+
+    local firstLocoCreated = false  -- Flag to track if the first locomotive was created
+    local firstFrontLoco  -- Local variable to replace global.firstFrontLoco
+
+    if connectedRail and connectedRail.trains_in_block == 0 then
+      firstFrontLoco = surface.create_entity{
+        name = "locomotive",
+        position = connectedRail.position,
+        direction = stationDirection,
+        force = "player"
+      }
+      addFuelToLocomotive(firstFrontLoco)
+      firstLocoCreated = true  -- Set the flag to true
     else
-        global.numberofways = 3
-		return table.concat(no_way_to, ", ")
-		
-		
     end
+
+    local delta = {x = 0, y = 0}
+
+    if firstLocoCreated then
+      local lastPosition = firstFrontLoco.position
+
+      -- Set delta based on stationDirection
+      if stationDirection == 0 then
+        delta.y = 7
+      elseif stationDirection == 2 then
+        delta.x = -7
+      elseif stationDirection == 4 then
+        delta.y = -7
+      elseif stationDirection == 6 then
+        delta.x = 7
+      end
+
+    for i = 2, numFrontLoco do
+      local newPosition = {x = lastPosition.x + delta.x, y = lastPosition.y + delta.y}
+      local newLoco = surface.create_entity{
+        name = "locomotive",
+        position = newPosition,
+        direction = stationDirection,
+        force = "player"
+      }
+      addFuelToLocomotive(newLoco)
+      lastPosition = newPosition
+    end
+
+    for i = 1, numCargoWagons do
+      local newPosition = {x = lastPosition.x + delta.x, y = lastPosition.y + delta.y}
+      local newWagon = surface.create_entity{
+        name = "cargo-wagon",
+        position = newPosition,
+        direction = stationDirection,
+        force = "player"
+      }
+      lastPosition = newPosition
+    end
+
+    for i = 1, numFluidWagons do
+      local newPosition = {x = lastPosition.x + delta.x, y = lastPosition.y + delta.y}
+      local newFluidWagon = surface.create_entity{
+        name = "fluid-wagon",
+        position = newPosition,
+        direction = stationDirection,
+        force = "player"
+      }
+      lastPosition = newPosition
+    end
+
+    for i = 1, numBackLoco do
+		local newPosition = {x = lastPosition.x + delta.x, y = lastPosition.y + delta.y}
+		if stationDirection > 3 then 
+		backlocodirection = stationDirection - 4
+		elseif stationDirection < 4 then 
+		backlocodirection = stationDirection + 4
+		end
+      local newBackLoco = surface.create_entity{
+        name = "locomotive",
+        position = newPosition,
+        direction = backlocodirection,
+        force = "player"
+      }
+      addFuelToLocomotive(newBackLoco)
+      lastPosition = newPosition
+    end
+
+    local schedule = create_schedule(stationName)
+
+      if schedule then
+        local train = firstFrontLoco.train  -- Use the first front loco to get the train
+        train.schedule = {current = 1, records = {{station = schedule}}}
+        train.manual_mode = false
+		train.speed = 290
+		
+      else
+        log("No schedule found with the name: " .. scheduleName)
+      end
+    end
+  end
+end
+
+-- Global State
+
+function find_Output_trainstops()
+    local all_train_stops = game.surfaces[1].find_entities_filtered{type="train-stop"}
+    local stops = {}
+    local Output_stops = {}  -- New table for filtered stops
+
+    for _, stop in pairs(all_train_stops) do
+        local stop_data = {
+            direction = stop.direction,
+            coordinates = stop.position,
+            name = stop.backer_name
+        }
+        table.insert(stops, stop_data)
+    end
+
+    for _, stop in pairs(stops) do
+        if string.find(stop.name, "Output") then
+            table.insert(Output_stops, stop)  -- Add matching stops to the new table
+        end
+    end
+
+    global.output_trainstops = Output_stops
+end
+
+function find_railsignals_and_make_groups()
+    for _, train_stop in pairs(global.output_trainstops) do
+        local signals_in_radius = game.surfaces[1].find_entities_filtered{
+            type = "rail-signal",
+            area = {
+                {train_stop.coordinates.x - 2, train_stop.coordinates.y - 2},
+                {train_stop.coordinates.x + 2, train_stop.coordinates.y + 2}
+            }
+        }
+
+        for _, signal in pairs(signals_in_radius) do
+            local signal_entity = game.surfaces[1].find_entity("rail-signal", signal.position)
+            local signal_state = "open"
+            if signal_entity then
+                signal_state = signal_entity.signal_state  -- Fetching the actual state using the provided definition
+            end
+
+            table.insert(global.importantrailsignals, {
+                coordinates = signal.position,
+                direction = train_stop.direction,
+                state = signal_state
+            })
+        end
+    end
+
+    table.sort(global.importantrailsignals, function(a, b)
+        return a.direction < b.direction
+    end)
+end
+
+function check_state_and_update_table()
+    local updated_signals = {}
+
+    for _, rail_signal_data in pairs(global.importantrailsignals) do
+        local x = rail_signal_data.coordinates.x
+        local y = rail_signal_data.coordinates.y
+        local state_description = read_signal_state_at_coordinates(x, y)
+        -- Convert state description back to the corresponding enum value
+        local newState = nil
+        if state_description == "Closed (Red)" then
+            newState = "closed"
+        elseif state_description == "Reserved (Orange)" then
+            newState = "reserved"
+        end
+
+        -- Only update the state if newState is not nil and not 0
+        if newState and newState ~= "Open (green)" then
+            rail_signal_data.state = newState
+        end
+
+        table.insert(updated_signals, rail_signal_data)
+    end
+
+    global.importantrailsignals = updated_signals
 end
 
 
---Testbench logic
 
-function delete_trains_to_stop(stop_names, skip_first)
-    for _, stop_name in pairs(stop_names) do
-        local pattern = stop_name  -- Prepare the pattern, could add more specific rules here if needed
+function RHT_or_LHT_based_on_signal_state()
+    -- Step 1: Determine the Min/Max Values for Each Group
+    local minX = { [0] = math.huge, [2] = math.huge, [4] = math.huge, [6] = math.huge }
+    local maxX = { [0] = -math.huge, [2] = -math.huge, [4] = -math.huge, [6] = -math.huge }
+    local minY = { [0] = math.huge, [2] = math.huge, [4] = math.huge, [6] = math.huge }
+    local maxY = { [0] = -math.huge, [2] = -math.huge, [4] = -math.huge, [6] = -math.huge }
+	global.RHT = 0
 
-        for _, surface in pairs(game.surfaces) do
-            for _, train in pairs(surface.get_trains()) do
-                if train.schedule and train.schedule.records then
-                    for _, record in pairs(train.schedule.records) do
-                        if string.find(record.station, pattern) then  -- Look for the pattern in the station name
-                            if skip_first and train.manual_mode then
-                                -- Skip the first carriage and delete the rest
-                                for i = 2, #train.carriages do  -- Start from 2 to skip the first carriage
-                                    train.carriages[i].destroy()
-                                end
-                            elseif not skip_first and not train.manual_mode then
-                                -- Delete all carriages
-                                for _, carriage in pairs(train.carriages) do
-                                    carriage.destroy()
-                                end
-                            end
-                            break  -- Exit the loop for this train's schedule
-                        end
-                    end
-                end
+    for _, rail_signal_data in pairs(global.importantrailsignals) do
+        local dir = rail_signal_data.direction
+        minX[dir] = math.min(minX[dir], rail_signal_data.coordinates.x)
+        maxX[dir] = math.max(maxX[dir], rail_signal_data.coordinates.x)
+        minY[dir] = math.min(minY[dir], rail_signal_data.coordinates.y)
+        maxY[dir] = math.max(maxY[dir], rail_signal_data.coordinates.y)
+    end
+
+    -- Step 2: Compare Individual Signals to the Min/Max Values
+    for _, rail_signal_data in pairs(global.importantrailsignals) do
+        local dir = rail_signal_data.direction
+        if dir == 0 and rail_signal_data.coordinates.x == minX[dir] then
+            if rail_signal_data.state == defines.signal_state.closed then
+                global.RHT = global.RHT + 1
+            elseif rail_signal_data.state == defines.signal_state.reserved then
+                global.RHT = global.RHT - 1
+            end
+        elseif dir == 2 and rail_signal_data.coordinates.y == minY[dir] then
+            if rail_signal_data.state == defines.signal_state.closed then
+                global.RHT = global.RHT + 1
+            elseif rail_signal_data.state == defines.signal_state.reserved then
+                global.RHT = global.RHT - 1
+            end
+        elseif dir == 4 and rail_signal_data.coordinates.x == maxX[dir] then
+            if rail_signal_data.state == defines.signal_state.closed then
+                global.RHT = global.RHT + 1
+            elseif rail_signal_data.state == defines.signal_state.reserved then
+                global.RHT = global.RHT - 1
+            end
+        elseif dir == 6 and rail_signal_data.coordinates.y == maxY[dir] then
+            if rail_signal_data.state == defines.signal_state.closed then
+                global.RHT = global.RHT + 1
+            elseif rail_signal_data.state == defines.signal_state.reserved then
+                global.RHT = global.RHT - 1
             end
         end
     end
 end
 
-function update_trains_with_one_carriage(Loco_value, Wagons_value)
-    local trains_to_update = {}  -- Table to hold the trains that need to be updated
-    
-    -- Scan all trains on all surfaces
-    for _, surface in pairs(game.surfaces) do
-        for _, train in pairs(surface.get_trains()) do
-            if train.schedule and train.schedule.records then
-                for _, record in pairs(train.schedule.records) do
-                    if #train.carriages == 1 then  -- Only front carriage is left
-                        table.insert(trains_to_update, train)  -- Add the train to the list
-                        break  -- Exit the loop for this train's schedule
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Update the trains by adding locomotives and wagons
-    for _, train in pairs(trains_to_update) do
-        -- Add locomotives
-        for i = 1, Loco_value do
-            surface.create_entity{
-                name = "locomotive",
-                position = train.front_stock.position,
-                direction = train.front_stock.direction,
-                force = train.force,
-                raise_built = true
-            }
-        end
-        -- Add wagons
-        for i = 1, Wagons_value do
-            surface.create_entity{
-                name = "cargo-wagon",
-                position = train.back_stock.position,
-                direction = train.back_stock.direction,
-                force = train.force,
-                raise_built = true
-            }
-        end
-    end
+function check_4ways_or_3ways()
+    -- Initialize global.ways to 0
+    global.ways = 0
+    -- Loop through the four groups by direction
+    local groups = {0, 2, 4, 6}  -- Array of desired values
+
+	for _, dir in pairs(groups) do  -- Loops for directions: 0, 2, 4, 6
+		local found_non_zero_or_nil = false
+
+		for _, rail_signal_data in pairs(global.importantrailsignals) do
+			if rail_signal_data.direction== dir then
+				-- If signal_state is not 0 or nil
+				if rail_signal_data.state ~= 0 and rail_signal_data.state ~= nil then
+					found_non_zero_or_nil = true
+					break  -- Breaks from the inner loop as soon as one non-zero/nil is found
+				end
+			end
+		end
+
+		-- If any non-zero/nil signal_state was found in the group, increment global.ways
+		if found_non_zero_or_nil then
+			global.ways = global.ways + 1
+		end
+	end
 end
 
 
 
--- Function to set a signal at a given index in a Constant Combinator
-function set_signal(index, signal, reset_next_tick)
-    local surface = game.surfaces[1]
-    local combinator = surface.find_entity("constant-combinator", COMBINATOR_POSITION)
 
-    global.pending_resets = global.pending_resets or {}  -- Safeguard
+function create_schedule(stationName)
+    local availableStations = {"Output East", "Output West", "Output North", "Output South"}
+    local rand = math.random(1, 100)
+    local removeMap = {["Spawner East"] = 1, ["Spawner West"] = 2, ["Spawner North"] = 3, ["Spawner South"] = 4}
+    local selectedStation = nil
 
-    if reset_next_tick then
-        table.insert(global.pending_resets, {index = index, tick = game.tick + 1})
-    end
+    table.remove(availableStations, removeMap[stationName] or 0)
 
-    if combinator and combinator.valid then
-        local control_behavior = combinator.get_or_create_control_behavior()
-
-        if signal then
-            control_behavior.set_signal(index, {signal = {type="virtual", name=signal.type}, count = signal.value or 1})
-        else
-            control_behavior.set_signal(index, nil)
+    local selectMap = {
+        [1] = function() return availableStations[math.random(1, #availableStations)] end,
+        [2] = function()
+            local options = {["Spawner North"] = {"Output South", "Output East", "Output West"},
+                             ["Spawner South"] = {"Output West", "Output North", "Output East"},
+                             ["Spawner East"] = {"Output South", "Output West", "Output North"},
+                             ["Spawner West"] = {"Output North", "Output East", "Output South"}}
+            return rand <= 45 and options[stationName][1] or rand <= 90 and options[stationName][2] or options[stationName][3]
+        end,
+        [3] = function()
+            local options = {["Spawner North"] = {"Output East", "Output West", "Output South"},
+                             ["Spawner South"] = {"Output West", "Output East", "Output North"},
+                             ["Spawner East"] = {"Output South", "Output North", "Output West"},
+                             ["Spawner West"] = {"Output North", "Output South", "Output East"}}
+            return rand <= 90 and options[stationName][1] or rand <= 95 and options[stationName][2] or options[stationName][3]
         end
-    end
+    }
+
+    selectedStation = selectMap[global.current_test]()
+
+    return selectedStation
+end
+
+-- Function to calculate test score
+function calculate_test_score()
+  -- Part 1: Calculate the score
+  local score = global.despawned_trains / global.M_value
+	if global.current_test == 1 then
+	global.set1 = score
+	global.set2 = 0
+	global.set3 = 0
+	global.Average = 0
+	global.current_test = 2
+	elseif global.current_test == 2 then
+	global.set2 = score
+	global.current_test = 3
+	elseif global.current_test == 3 then
+	global.set3 = score
+	global.Average = string.format("%.2f", (global.set1 + global.set2 + global.set3) / 3)
+	global.current_test = 1
+	game.print("global.set1: " .. global.set1 .. ", global.set2: " .. global.set2 .. ", global.set3: " .. global.set3 .. ", global.Average: " .. global.Average)
+	log("global.set1: " .. global.set1 .. ", global.set2: " .. global.set2 .. ", global.set3: " .. global.set3 .. ", global.Average: " .. global.Average)
+	end
+	global.despawned_trains = 0
+end
+
+function addFuelToLocomotive(loco)
+	if loco ~= nil then
+	local fuelInventory = loco.burner.inventory
+	fuelInventory.insert({name = "nuclear-fuel", count = 1})  -- Insert 50 units of coal
+	end
 end
 
 -- Helper function to recursively find and update a label
 function update_label(element, label_name, new_caption)
+	if not element then return false end  -- Check if element is valid
     if element.name == label_name then
         element.caption = new_caption
         return true
@@ -334,31 +579,6 @@ function update_label(element, label_name, new_caption)
     return false
 end
 
--- Function to update labels based on signals from a medium electric pole
-function update_labels_from_pole()
-	for _, player in pairs(game.players) do
-		local outer_frame = player.gui.screen.outer_frame
-		if outer_frame then  -- Check if outer_frame exists
-			local inner_frame2 = outer_frame.inner_frame2
-			if inner_frame2 then  -- Check if inner_frame2 exists
-				if signals then
-					local signal_4 = signals["signal_4"] or 0
-					local signal_6 = signals["signal_6"] or 0
-					local signal_8 = signals["signal_8"] or 0
-					local signal_9 = signals["signal_9"] or 0
-					
-                        
-					update_label(inner_frame2, "set1_label", "Set 1: " .. signal_4)
-					update_label(inner_frame2, "set2_label", "Set 2: " .. signal_6)
-					update_label(inner_frame2, "set3_label", "Set 3: " .. signal_8)
-					update_label(inner_frame2, "score_label", "Score: " .. signal_9)
-				end
-              
-                
-            end
-        end
-    end
-end
 
 if defines and defines.events and defines.events.on_load then
     script.on_event(defines.events.on_load, function(event)
@@ -370,105 +590,157 @@ if defines and defines.events and defines.events.on_load then
     end)
 end
 
--- Event handler for game tick
-script.on_event(defines.events.on_tick, function(event)
-    local surface = game.surfaces[1]
-    local pole = surface.find_entity("medium-electric-pole", {x=208.5, y=1280.5})
-    local signals = {}
-    
-    if event.tick % 30 == 0 then
-        if pole then
-            local signal_arr = pole.get_merged_signals(defines.circuit_connector_id.electric_pole)
-            if signal_arr then
-                for _, signal in pairs(signal_arr) do
-                    signals[signal.signal.name] = signal.count
-                end
-            end
-            
-            local current_signal_P = signals['signal-P'] or 0
-            local signal_P_changed = (current_signal_P ~= global.last_signal_P)
-            if signal_P_changed then
-                delete_trains_to_stop({"all lanes", "output"}, false)
-            end
-            global.last_signal_P = current_signal_P
-            
-            for _, player in pairs(game.players) do  
-                local inner_frame1 = player.gui.screen.outer_frame.inner_frame1
-                local start_button = inner_frame1.start_button
-                local auto_button = inner_frame1.auto_button
-                
-                if start_button and start_button.valid then
-                    if signals['signal-J'] == 0 or signals['signal-J'] == nil then
-                        global.testbench_running = false
-                        start_button.sprite = "start_button_sprite"
-                    elseif signals['signal-J'] == 1 then
-                        global.testbench_running = true
-                        start_button.sprite = "stop_button_sprite"
-                    end
-                end
-                
-                if auto_button and auto_button.valid then
-                    if signals['signal-1'] == 0 or signals['signal-1'] == nil then
-                        global.auto_mode = false
-                        auto_button.sprite = "manual_button_sprite"
-                    elseif signals['signal-1'] == 1 then
-                        global.auto_mode = true
-                        auto_button.sprite = "auto_button_sprite"
-                    end
-                end
-            end
-            
-            local current_signal_9 = signals["signal-9"]
-            if global.last_signal_9 ~= current_signal_9 and signals["signal-9"] ~= nil then
-                game.print(
-                    "Set1: " .. string.format("%.2f", (signals["signal-4"] or 0) / 100) ..
-                    ", Set2: " .. string.format("%.2f", (signals["signal-6"] or 0) / 100) ..
-                    ", Set3: " .. string.format("%.2f", (signals["signal-8"] or 0) / 100) ..
-                    ", Score: " .. string.format("%.2f", current_signal_9 / 100)
-                )
-            end
-            
-            global.last_signal_9 = current_signal_9
-            
-            local current_signal_J = signals['signal-J']
-            if global.last_signal_J == 1 and current_signal_J == nil then
-                run_test()
-            end
-            global.last_signal_J = current_signal_J
-        end
-        
-        for _, player in pairs(game.players) do  
-            local inner_frame2 = player.gui.screen.outer_frame.inner_frame2
-            if inner_frame2 then
-                local set1_value = (signals["signal-4"] or 0) / 100
-				local set2_value = (signals["signal-6"] or 0) / 100
-				local set3_value = (signals["signal-8"] or 0) / 100
-				local score_value = (signals["signal-9"] or 0) / 100
-				local current_time_value = (signals["signal_0"] or 0) / 100
-				local current_tpm_value = (signals["signal_2"] or 0) / 100
-				local current_set_value = (signals["signal_Z"] or 0) / 100
 
-				inner_frame2.set1_label.caption = "Set 1: " .. string.format("%.2f", set1_value)
-				inner_frame2.set2_label.caption = "Set 2: " .. string.format("%.2f", set2_value)
-				inner_frame2.set3_label.caption = "Set 3: " .. string.format("%.2f", set3_value)
-				inner_frame2.score_label.caption = "Score: " .. string.format("%.2f", score_value)
-				inner_frame2.current_time_running_label.caption = "Current Time: " .. string.format("%.2f", current_time_value)
-				inner_frame2.current_tpm_label.caption = "Current TPM: " .. string.format("%.2f", current_tpm_value)
-				inner_frame2.current_set_label.caption = "Current Set: " .. string.format("%.2f", current_set_value)
+-- Function to update labels based on global variables
+function update_labels_from_globals()
+    for _, player in pairs(game.players) do
+        local parent_frame = player.gui.screen.parent_frame
+        if parent_frame then  -- Check if parent_frame exists
+            
+            local horizontal_frame = parent_frame.horizontal_frame
+            if horizontal_frame then  -- Check if horizontal_frame exists
 
+                
+                local inner_frame2 = horizontal_frame.inner_frame2
+                if inner_frame2 then  -- Check if inner_frame2 exists
+
+                    
+                    -- Fetch values from global variables
+                    local set1_score = string.format("%.2f", global.set1)
+                    local set2_score = string.format("%.2f", global.set2)
+                    local set3_score = string.format("%.2f", global.set3)
+                    local total_score = string.format("%.2f",global.Average)
+                    local current_set = global.current_test or "N/A"
+                    local test_timer = global.testtimer or 0
+                    local tpm_value = string.format("%.2f", global.despawned_trains / (global.testtimer / 60))
+                    
+                    -- Update labels
+                    update_label(inner_frame2, "set1_label", "Set 1: " .. set1_score)
+                    update_label(inner_frame2, "set2_label", "Set 2: " .. set2_score)
+                    update_label(inner_frame2, "set3_label", "Set 3: " .. set3_score)
+                    update_label(inner_frame2, "score_label", "Score: " .. total_score)
+                    update_label(inner_frame2, "current_set_label", "Current Set: " .. current_set)
+                    update_label(inner_frame2, "current_time_running_label", "Test Timer: " .. test_timer)
+                    update_label(inner_frame2, "current_tpm_label", "TPM: " .. tpm_value)
+                else
+                    log("Debug: inner_frame2 does not exist")
+                end
+            else
+                log("Debug: horizontal_frame does not exist")
             end
+        else
+            log("Debug: parent_frame does not exist")
         end
     end
+end
+
+-- Function to spawn trains at spawner stations
+function start_spawning_trains() 
+  local spawner_stations = {"Spawner North", "Spawner West", "Spawner East", "Spawner South"}
+  for _, station in pairs(spawner_stations) do
+    spawnTrainAtStationWithSchedule(station, global.Loco_value, 0, global.Wagons_value, 0)
+  end
+end
+
+
+
+script.on_event(defines.events.on_tick, function(event)
+    -- Increment the counter
+    global.counter = global.counter + 1
+    if global.testbench_running==true then
+		if global.current_set == 1 then
+			if global.testtimer > 10 and global.testtimer < 60 then
+				check_state_and_update_table()
+			end
+		end
+	end
+	
+    if global.counter >= global.tpmtick and global.testbench_running == true then
+        -- Call the function to start spawning trains
+        start_spawning_trains()
+        
+        -- Reset the counter
+        global.counter = 0
+    end
+end)
+
+-- Event handler for every 60th tick
+script.on_nth_tick(60, function(event)
+    local player = game.players[1]
+    local parent_frame = player.gui.screen["parent_frame"]
+    local inner_frame1 = parent_frame and parent_frame.horizontal_frame.inner_frame1
+	update_labels_from_globals()
+
+    global.sec = global.sec + 1
+    update_labels_from_globals()
     
-    if global.pending_resets then
-        for i, pending_reset in pairs(global.pending_resets) do
-            if event.tick >= pending_reset.tick then
-                set_signal(pending_reset.index, nil)
-                table.remove(global.pending_resets, i)
+    if global.testbench_running == true then
+        if global.despawned_trains > 0 then 
+            global.testtimer = global.testtimer + 1
+        end
+		if global.testtimer == 60 then 
+			    if global.importantrailsignals then
+					for key, value in pairs(global.importantrailsignals) do
+					local description = "Key: " .. tostring(key) .. ", Value: " .. serpent.line(value)
+					end
+				end
+			check_4ways_or_3ways()
+			RHT_or_LHT_based_on_signal_state()
+			local waysDescription = "Value of global.ways: " .. tostring(global.ways)
+			local RHTDescription = "Value of global.RHT: " .. tostring(global.RHT)
+			game.print(waysDescription)
+			game.print(RHTDescription)
+			end
+			
+        if global.testtimer >= global.M_value * 60 then
+            global.testbench_running = false
+            delete_all_trains(player.surface)
+            global.testtimer = 0
+            if global.current_test < 3 then
+                global.testbench_running = true
+            elseif global.current_test == 3 then
+                run_test()
+                
+                if global.TestRuns_counter == nil then
+                    global.TestRuns_counter = 0  -- Initialize it if it's nil
+                end
+                
+                if global.TestRuns_counter == 0 then
+                    if inner_frame1 then  -- Check if inner_frame1 is not nil
+                        local start_button = inner_frame1.start_button
+                        if start_button and start_button.sprite == "stop_button_sprite" then
+                            start_button.sprite = "start_button_sprite"
+                        end
+                    else
+                        log("Debug: inner_frame1 is nil")
+                    end
+                elseif global.TestRuns_counter > 0 then
+                    global.testbench_running = true	
+                end
             end
+			calculate_test_score()
+        end
+    elseif global.test_running == false then
+        global.testtimer = 0
+    end
+end)
+
+
+script.on_event(defines.events.on_train_changed_state, function(event)
+    local train = event.train
+    if train.state == defines.train_state.arrive_station then
+        -- Delete all carriages in the train
+        for _, carriage in pairs(train.carriages) do
+            carriage.destroy()
+        end
+        global.despawned_trains = global.despawned_trains + 1
+        if global.despawned_trains == 1 then 
+            global.testtimer = 0
         end
     end
 end)
+
+
 
 
 -- Event handler for button clicks
@@ -476,21 +748,17 @@ script.on_event(defines.events.on_gui_click, function(event)
     local player = game.players[event.player_index]
     local element = event.element
     local surface = player.surface
-	local inner_frame1 = player.gui.screen.outer_frame.inner_frame1
-	    if element.name == "reset_values_button" then
+    local inner_frame1 = player.gui.screen.parent_frame.horizontal_frame.inner_frame1
+
+    if element.name == "reset_values_button" then
         local frame = player.gui.screen["settings_frame"]
         if frame then
             local main_flow = frame["main_flow"]
             if main_flow then
                 local settings_flow = main_flow["settings_flow"]
                 if settings_flow then
-                    local K_slider = settings_flow["K_slider"]
                     local M_slider = settings_flow["M_slider"]
                     local TPM_slider = settings_flow["TPM_slider"]
-
-                    if K_slider and K_slider.valid and K_slider.type == "slider" then
-                        K_slider.slider_value = 2
-                    end
 
                     if M_slider and M_slider.valid and M_slider.type == "slider" then
                         M_slider.slider_value = 15
@@ -501,19 +769,10 @@ script.on_event(defines.events.on_gui_click, function(event)
                     end
 
                     -- Update global variables
-                    global.K_value = 2
                     global.M_value = 15
                     global.TPM_value = 2900
-					-- Send the new global values to the local combinator
-                    set_signal(6, {type="signal-K", value=global.K_value})
-                    set_signal(7, {type="signal-M", value=global.M_value})
-                    set_signal(10, {type="signal-G", value=global.TPM_value})
 
                     -- Update labels
-                    if settings_flow.K_value_label then
-                        settings_flow.K_value_label.caption = "2 Min"
-                    end
-
                     if settings_flow.M_value_label then
                         settings_flow.M_value_label.caption = "15 Min"
                     end
@@ -525,80 +784,108 @@ script.on_event(defines.events.on_gui_click, function(event)
             end
         end
     end
-	if element.name == "speed_up_button" then
-		if game.speed > 1 then
-		game.speed = 1
-		elseif game.speed < 20 then
-		game.speed = 20
-		end
-	end
-	if element.name == "apply_button" then
-		delete_trains_to_stop({"all lanes", "output"}, true)
-		
-    -- Add logic to add loco and wagons based on slider values
-    -- ... (your logic to add loco and wagons)
-	end
-
-    if element.name == "start_button" then
-		local start_button = inner_frame1.start_button
-        if element.sprite == "stop_button_sprite" then
-            element.sprite = "start_button_sprite"
-			global.TestRuns_counter = global.TestRuns_value
-			if global.auto_mode == true then
-				global.testbenchrunning = true
-				run_test()
-			end
-        else
-            element.sprite = "stop_button_sprite"
-			global.testbenchrunning = false 
-			set_signal(1, {type="signal-A", value=1}, true)
+	
+    if event.element.name == "apply_button" then
+        -- Only apply changes if the testbench is not running or is done
+        if global.testbench_running == false then
+            if global.temp_slider_values then  -- Check if temp_slider_values is not nil
+                for key, value in pairs(global.temp_slider_values) do
+                    global[key] = value
+                end
+                -- Clear the temporary table
+                global.temp_slider_values = {}
+            else
+                log("temp_slider_values is nil")
+            end
         end
-        
-		
-	end
+    end
 	
-    if element.name == "reset_button" then
-		local start_button = inner_frame1.start_button 
-		if start_button and start_button.valid then
-			if start_button.sprite == "stop_button_sprite" then
-				start_button.sprite = "start_button_sprite"
-				set_signal(1, {type="signal-A", value=1}, true)  -- Send the signal
-			end
+ if event.element.name == "apply_button" then
+        -- Only apply changes if the testbench is not running or is done
+        if global.testbench_running == false then
+            for key, value in pairs(global.temp_slider_values) do
+                global[key] = value
+            end
+            -- Clear the temporary table
+            global.temp_slider_values = {}
+        end
+    end
+
+    if element.name == "speed_up_button" then
+        if element.sprite == "speed_down_button_sprite" then
+            element.sprite = "speed_up_button_sprite"
+            if game.speed > 1 then
+                game.speed = 1
+            end
+        elseif element.sprite == "speed_up_button_sprite" then
+            element.sprite = "speed_down_button_sprite"
+            if game.speed < 200 then
+                game.speed = 200
+            end
+        end
+    end
+	
+	if element.name == "start_button" then
+        local start_button = inner_frame1.start_button
+		local player = game.players[1]
+        if element.sprite == "start_button_sprite" then
+            element.sprite = "stop_button_sprite"
+			delete_all_trains(player.surface)
+			global.current_test = 1
+			global.testrunning = true
+			global.testtimer = 0
+			global.sec = 0
+			global.despawned_trains = 0
+            global.TestRuns_counter = global.TestRuns_value
+			global.tpmtick = 360000/global.TPM_value
+			global.set1 = 0
+			global.set2 = 0
+			global.set3 = 0
+			global.Average = 0
+			global.output_trainstops = {}
+			global.importantrailsignals = {}
+			find_Output_trainstops()
+			find_railsignals_and_make_groups()
 			
-		end
-            -- Schedule delete_trains_to_stop() to run after 20 ticks
-        local tick_to_schedule = game.tick + 20
-        script.on_nth_tick(tick_to_schedule, function()
-            delete_trains_to_stop({"all lanes", "output"}, false)  -- Delete spawned trainse
-            script.on_nth_tick(tick_to_schedule, nil)  -- Unregister the one-time event
-        end)
-	end
-	
-	
+
+            if global.auto_mode == true then
+                global.testbench_running = true
+            end
+        else
+            element.sprite = "start_button_sprite"
+            global.testbench_running = false
+			delete_all_trains(player.surface)
+        end
+    end
+
+    if element.name == "reset_button" then
+        local start_button = inner_frame1.start_button
+        if start_button and start_button.valid then
+            if start_button.sprite == "stop_button_sprite" then
+                start_button.sprite = "start_button_sprite"
+                global.testbench_running = false
+            end
+        end
+    end
 
     if element.name == "auto_button" then
-		local auto_button = inner_frame1.auto_button
-		if element.sprite == "auto_button_sprite" then
-			global.auto_mode = true  -- Explicitly turn off auto_mode
-			element.sprite = "manual_button_sprite"
-		elseif element.sprite == "manual_button_sprite" then
-			global.auto_mode = false  -- Explicitly turn off auto_mode
-			element.sprite = "auto_button_sprite"
-		end
-	set_signal(2, {type="signal-B", value=1}, true)
-	end
-
-    if element.name == "sets_button" then
-		set_signal(3, {type="signal-C", value=1}, true)
-	end
+        local auto_button = inner_frame1.auto_button
+        if element.sprite == "auto_button_sprite" then
+            global.auto_mode = true
+            element.sprite = "manual_button_sprite"
+        elseif element.sprite == "manual_button_sprite" then
+            global.auto_mode = false
+            element.sprite = "auto_button_sprite"
+        end
+    end
 
     if element.name == "settings_button" then
-		 if player.gui.screen["settings_frame"] then
+        if player.gui.screen["settings_frame"] then
             player.gui.screen["settings_frame"].destroy()
-		else
-			create_settings_frame(player)
-		end
-	end
+        else
+            create_settings_frame(player)
+        end
+    end
 
     if element.name == "close_settings" then
         if player.gui.screen["settings_frame"] then
@@ -608,6 +895,10 @@ script.on_event(defines.events.on_gui_click, function(event)
 end)
 
 
+-- Initialize global.temp_slider_values if it doesn't exist
+if not global.temp_slider_values then
+    global.temp_slider_values = {}
+end
 
 -- Event handler for slider value change
 script.on_event(defines.events.on_gui_value_changed, function(event)
@@ -621,11 +912,10 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
         local settings_flow2 = main_flow["settings_flow2"]
 
         local slider_config = {
-            ["K_slider"] = {global_var="K_value", label="K_value_label", signal="signal-K", flow=settings_flow, index=6, suffix=" Min"},
-            ["M_slider"] = {global_var="M_value", label="M_value_label", signal="signal-M", flow=settings_flow, index=7, suffix=" Min"},
-            ["Loco_slider"] = {global_var="Loco_value", label="Loco_value_label", signal="signal-X", flow=settings_flow2, index=8},
-            ["Wagons_slider"] = {global_var="Wagons_value", label="Wagons_value_label", signal="signal-Y", flow=settings_flow2, index=9},
-            ["TPM_slider"] = {global_var="TPM_value", label="TPM_value_label", signal="signal-G", flow=settings_flow, index=10, scale=100},
+            ["M_slider"] = {global_var="M_value", label="M_value_label", flow=settings_flow, index=7, suffix=" Min"},
+            ["Loco_slider"] = {global_var="Loco_value", label="Loco_value_label", flow=settings_flow2, index=8},
+            ["Wagons_slider"] = {global_var="Wagons_value", label="Wagons_value_label", flow=settings_flow2, index=9},
+            ["TPM_slider"] = {global_var="TPM_value", label="TPM_value_label", flow=settings_flow, index=10, scale=100},
             ["TestRuns_slider"] = {global_var="TestRuns_value", label="TestRuns_value_label", flow=settings_flow2, index=11}
         }
 
@@ -633,7 +923,9 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
         if config then
             local value = tonumber(element.slider_value)
             if config.scale then value = math.floor(value * config.scale + 0.5) end
-            global[config.global_var] = value  -- Updating the global variable
+
+            -- Store the value in the temporary table instead of updating the global variable
+            global.temp_slider_values[config.global_var] = value
 
             local caption_value = config.scale and string.format("%.2f", value / config.scale) or tostring(value)
             if config.suffix then caption_value = caption_value .. config.suffix end
@@ -641,15 +933,12 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
             if config.flow[config.label] then
                 config.flow[config.label].caption = caption_value
             end
-			if config.signal then
-				set_signal(config.index, {type=config.signal, value=value})
-			end
         end
     end
 end)
 
+
 commands.add_command("print_globals", "Print global variables", function()
-    game.print("K_value: " .. tostring(global.K_value))
     game.print("M_value: " .. tostring(global.M_value))
     game.print("Loco_value: " .. tostring(global.Loco_value))
     game.print("TPM_value: " .. tostring(global.TPM_value))
